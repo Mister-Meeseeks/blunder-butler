@@ -11,7 +11,7 @@ from pathlib import Path
 import chess
 from stockfish import Stockfish, StockfishException
 
-from .cache import load_cache, make_cache_key, write_cache_entry
+from .cache import load_cache, load_game_cache, make_cache_key, save_game_cache, write_cache_entry
 from .config import Config
 from .errors import EngineError
 from .log import get_logger
@@ -93,6 +93,13 @@ def analyze_game(
 ) -> tuple[list[MoveAnalysis], int, int]:
     """Analyze all positions in a game. Returns (analyses, cache_hits, cache_misses)."""
     logger = get_logger()
+
+    # Check per-game cache first
+    if not config.no_game_cache:
+        cached_analyses = load_game_cache(game.game_id, config)
+        if cached_analyses is not None:
+            return cached_analyses, 0, 0
+
     engine_hash = config.engine_settings_hash()
     sf = create_engine(config)
     analyses: list[MoveAnalysis] = []
@@ -219,6 +226,10 @@ def analyze_game(
     except Exception:
         pass
 
+    # Save to per-game cache
+    if not config.no_game_cache and analyses:
+        save_game_cache(game.game_id, config, analyses)
+
     return analyses, cache_hits, cache_misses
 
 
@@ -313,6 +324,8 @@ def analyze_all_games(
         "inaccuracy_threshold": config.inaccuracy_threshold,
         "mistake_threshold": config.mistake_threshold,
         "blunder_threshold": config.blunder_threshold,
+        "output_dir": config.output_dir,
+        "no_game_cache": config.no_game_cache,
         "workers": 1,  # each worker is single-threaded
     }
 

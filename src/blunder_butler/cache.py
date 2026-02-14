@@ -5,9 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .log import get_logger
 from .models import MoveAnalysis
+
+if TYPE_CHECKING:
+    from .config import Config
+
+CACHE_VERSION = "1"
 
 
 def make_cache_key(fen: str, engine_hash: str) -> str:
@@ -58,3 +64,62 @@ def write_games_jsonl(path: Path, game_summaries: list[dict]) -> None:
     with open(path, "w") as f:
         for gs in game_summaries:
             f.write(json.dumps(gs) + "\n")
+
+
+def make_game_cache_key(game_id: str, config: Config) -> str:
+    """Create a cache key for a full game from game_id and relevant config fields."""
+    raw = "|".join([
+        CACHE_VERSION,
+        game_id,
+        config.engine_settings_hash(),
+        str(config.both_sides),
+        str(config.inaccuracy_threshold),
+        str(config.mistake_threshold),
+        str(config.blunder_threshold),
+    ])
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+def _game_cache_dir(config: Config) -> Path:
+    """Return the directory for per-game cache files."""
+    return Path(config.output_dir) / config.username.lower() / "game_cache"
+
+
+def load_game_cache(game_id: str, config: Config) -> list[MoveAnalysis] | None:
+    """Load cached game analysis. Returns None on miss."""
+    logger = get_logger()
+    key = make_game_cache_key(game_id, config)
+    path = _game_cache_dir(config) / f"{key}.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if data.get("cache_version") != CACHE_VERSION:
+            return None
+        analyses = [MoveAnalysis.from_dict(d) for d in data["analyses"]]
+        logger.info("Game cache hit for %s (%d moves)", game_id[:8], len(analyses))
+        return analyses
+    except Exception as e:
+        logger.warning("Error loading game cache for %s: %s", game_id[:8], e)
+        return None
+
+
+def save_game_cache(game_id: str, config: Config, analyses: list[MoveAnalysis]) -> None:
+    """Save game analysis to the per-game cache."""
+    logger = get_logger()
+    cache_dir = _game_cache_dir(config)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = make_game_cache_key(game_id, config)
+    path = cache_dir / f"{key}.json"
+    data = {
+        "cache_version": CACHE_VERSION,
+        "game_id": game_id,
+        "analyses": [a.to_dict() for a in analyses],
+    }
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f)
+        logger.debug("Saved game cache for %s", game_id[:8])
+    except Exception as e:
+        logger.warning("Error saving game cache for %s: %s", game_id[:8], e)

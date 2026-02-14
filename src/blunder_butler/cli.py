@@ -46,6 +46,8 @@ from .pipeline import run_pipeline
     help="Fetch cache TTL in seconds (default 300).")
 @click.option("--no-fetch-cache", is_flag=True, default=False,
     help="Bypass fetch cache (still writes cache for future runs).")
+@click.option("--no-game-cache", is_flag=True, default=False,
+    help="Bypass per-game analysis cache (re-analyze all games).")
 @click.option("--output-dir", default="out", help="Output directory.")
 @click.option("--openings-only", is_flag=True, default=False,
     help="Only report on opening phase (debugging).")
@@ -80,6 +82,7 @@ def main(
     resume: bool,
     fetch_cache_ttl: int,
     no_fetch_cache: bool,
+    no_game_cache: bool,
     output_dir: str,
     openings_only: bool,
     endgames_only: bool,
@@ -113,6 +116,7 @@ def main(
         resume=resume,
         fetch_cache_ttl=fetch_cache_ttl,
         no_fetch_cache=no_fetch_cache,
+        no_game_cache=no_game_cache,
         output_dir=output_dir,
         openings_only=openings_only,
         endgames_only=endgames_only,

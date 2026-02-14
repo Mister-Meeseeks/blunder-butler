@@ -37,6 +37,7 @@ class Config:
     inaccuracy_threshold: int = 50
     mistake_threshold: int = 100
     blunder_threshold: int = 200
+    no_game_cache: bool = False
 
     def engine_settings_hash(self) -> str:
         """Hash of engine settings for cache key derivation."""
