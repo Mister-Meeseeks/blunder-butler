@@ -10,8 +10,22 @@ import requests
 
 from .config import Config
 from .log import get_logger
-from .models import Summary
+from .models import Phase, Summary
 from .report import generate_report
+
+
+def _worst_moves_by_phase(summary: Summary, n: int = 20) -> dict[str, list[dict]]:
+    """Return the top-N worst moves for each game phase, sorted by CPL descending."""
+    by_phase: dict[str, list] = {}
+    for s in summary.swing_moves:
+        phase_name = s.phase.value
+        by_phase.setdefault(phase_name, []).append(s)
+    result = {}
+    for phase in (Phase.OPENING, Phase.MIDDLEGAME, Phase.ENDGAME):
+        moves = sorted(by_phase.get(phase.value, []), key=lambda m: m.cpl, reverse=True)[:n]
+        if moves:
+            result[phase.value] = [m.to_dict() for m in moves]
+    return result
 
 
 def _build_evidence_packet(summary: Summary) -> str:
@@ -24,7 +38,7 @@ def _build_evidence_packet(summary: Summary) -> str:
         "phase_stats": [ps.to_dict() for ps in summary.phase_stats if ps.total_moves > 0],
         "time_control_stats": [tc.to_dict() for tc in summary.time_control_stats],
         "motifs": [m.to_dict() for m in summary.motifs],
-        "worst_moves": [s.to_dict() for s in summary.swing_moves[:5]],
+        "worst_moves_by_phase": _worst_moves_by_phase(summary),
     }
     return json.dumps(packet, indent=2)
 

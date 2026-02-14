@@ -112,6 +112,10 @@ def run_pipeline(config: Config) -> Path:
 
     # Stage 6: Report
     logger.info("=== Stage 6: Report generation ===")
+    from .llm import _build_evidence_packet
+    evidence_path = run_dir / "report" / "evidence.json"
+    with open(evidence_path, "w") as f:
+        f.write(_build_evidence_packet(summary))
     report_text = generate_report_with_llm_fallback(summary, config)
     report_path = run_dir / "report" / "report.md"
     with open(report_path, "w") as f:
