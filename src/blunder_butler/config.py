@@ -15,9 +15,9 @@ class Config:
     since_days: int = 90
     since_date: str = ""  # YYYY-MM-DD override
     until_date: str = ""  # YYYY-MM-DD override
-    max_games: int = 300
+    max_games: int = 100
     rated_only: bool = True
-    engine_time_ms: int = 200
+    engine_time_ms: int = 100
     depth: int | None = None  # mutually exclusive with engine_time_ms
     engine_path: str = ""  # auto-detect if empty
     threads: int = 1
@@ -29,7 +29,9 @@ class Config:
     llm_api_key: str = ""
     resume: bool = False
     output_dir: str = "out"
-    workers: int = 1
+    fetch_cache_ttl: int = 300  # seconds
+    no_fetch_cache: bool = False
+    workers: int = 4
     openings_only: bool = False
     endgames_only: bool = False
     inaccuracy_threshold: int = 50

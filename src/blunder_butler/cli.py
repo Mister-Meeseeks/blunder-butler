@@ -21,16 +21,16 @@ from .pipeline import run_pipeline
     help="Fetch games from the last N days.")
 @click.option("--since-date", default="", help="Fetch games since YYYY-MM-DD (overrides --since).")
 @click.option("--until-date", default="", help="Fetch games until YYYY-MM-DD.")
-@click.option("--max-games", default=300, type=int, help="Maximum number of games to fetch.")
+@click.option("--max-games", default=100, type=int, help="Maximum number of games to fetch.")
 @click.option("--rated-only/--include-unrated", default=True, help="Only analyze rated games.")
-@click.option("--engine-time-ms", default=200, type=int,
+@click.option("--engine-time-ms", default=100, type=int,
     help="Stockfish analysis time per move in milliseconds.")
 @click.option("--depth", default=None, type=int,
     help="Stockfish analysis depth (mutually exclusive with --engine-time-ms).")
 @click.option("--engine-path", default="", help="Path to Stockfish binary.")
 @click.option("--threads", default=1, type=int, help="Stockfish threads per engine instance.")
 @click.option("--hash-mb", default=64, type=int, help="Stockfish hash table size in MB.")
-@click.option("--workers", default=1, type=int,
+@click.option("--workers", default=4, type=int,
     help="Number of parallel analysis workers (each gets its own engine).")
 @click.option("--both-sides", is_flag=True, default=False,
     help="Analyze both players' moves (not just the target user).")
@@ -42,6 +42,10 @@ from .pipeline import run_pipeline
 @click.option("--llm-api-key", default="", envvar="LLM_API_KEY", help="LLM API key.")
 @click.option("--resume", is_flag=True, default=False,
     help="Resume analysis using cached positions.")
+@click.option("--fetch-cache-ttl", default=300, type=int,
+    help="Fetch cache TTL in seconds (default 300).")
+@click.option("--no-fetch-cache", is_flag=True, default=False,
+    help="Bypass fetch cache (still writes cache for future runs).")
 @click.option("--output-dir", default="out", help="Output directory.")
 @click.option("--openings-only", is_flag=True, default=False,
     help="Only report on opening phase (debugging).")
@@ -74,6 +78,8 @@ def main(
     llm_model: str,
     llm_api_key: str,
     resume: bool,
+    fetch_cache_ttl: int,
+    no_fetch_cache: bool,
     output_dir: str,
     openings_only: bool,
     endgames_only: bool,
@@ -105,6 +111,8 @@ def main(
         llm_model=llm_model,
         llm_api_key=llm_api_key,
         resume=resume,
+        fetch_cache_ttl=fetch_cache_ttl,
+        no_fetch_cache=no_fetch_cache,
         output_dir=output_dir,
         openings_only=openings_only,
         endgames_only=endgames_only,

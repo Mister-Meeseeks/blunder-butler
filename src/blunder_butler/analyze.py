@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import shutil
 import tempfile
@@ -14,7 +15,7 @@ from .cache import load_cache, make_cache_key, write_cache_entry
 from .config import Config
 from .errors import EngineError
 from .log import get_logger
-from .models import Color, Eval, MoveAnalysis, MoveFlag, ParsedGame
+from .models import Color, Eval, GameResult, MoveAnalysis, MoveFlag, ParsedGame, TimeControl
 
 
 def create_engine(config: Config) -> Stockfish:
@@ -73,23 +74,13 @@ def analyze_position(sf: Stockfish, fen: str, config: Config) -> tuple[Eval, str
     sf.set_fen_position(fen)
     if config.depth:
         sf.set_depth(config.depth)
+        best_move = sf.get_best_move()
     else:
-        # Use time-based analysis
-        sf.set_depth(20)  # max depth, will be limited by time
+        best_move = sf.get_best_move_time(config.engine_time_ms)
 
-    # Get best move and PV
-    best_move = sf.get_best_move_time(config.engine_time_ms) if not config.depth else sf.get_best_move()
+    # get_evaluation() reuses the last search result — no extra engine call
     ev = _eval_from_stockfish(sf)
-
-    # Get PV (top line)
-    top_moves = sf.get_top_moves(1)
-    pv = []
-    if top_moves:
-        line = top_moves[0].get("Move", "")
-        pv = [line] if line else []
-        # Some versions return full PV
-        if "Centipawn" in top_moves[0] or "Mate" in top_moves[0]:
-            pass  # eval already captured
+    pv = [best_move] if best_move else []
 
     return ev, best_move or "", pv
 
@@ -114,6 +105,7 @@ def analyze_game(
 
     board = chess.Board()
 
+    total_plies = len(game.moves_san)
     for i, (san, fen_before) in enumerate(zip(game.moves_san, fens_before)):
         ply = i + 1
         side_to_move = Color.WHITE if (ply % 2 == 1) else Color.BLACK
@@ -129,6 +121,9 @@ def analyze_game(
             except Exception:
                 pass
             continue
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("  ply %d/%d: %s", ply, total_plies, san)
 
         # Check cache
         cache_key = make_cache_key(fen_before, engine_hash)
@@ -170,13 +165,10 @@ def analyze_game(
             # Get eval of best move
             eval_best = normalize_eval(eval_before_raw, game.player_color)
 
-            # Now get eval after player's actual move
+            # Analyze position after player's actual move
             board.push(move)
             fen_after = board.fen()
-            sf.set_fen_position(fen_after)
-            if config.depth:
-                sf.set_depth(config.depth)
-            eval_after_raw = _eval_from_stockfish(sf)
+            eval_after_raw, _, _ = analyze_position(sf, fen_after, config)
             eval_after = normalize_eval(eval_after_raw, game.player_color)
 
             # CPL = max(0, eval_best_clamped - eval_after_clamped)
@@ -230,32 +222,45 @@ def analyze_game(
     return analyses, cache_hits, cache_misses
 
 
-def _worker_analyze(args: tuple) -> tuple[list[dict], int, int]:
-    """Worker function for multiprocessing. Analyzes a batch of games."""
+# Per-worker state set by _pool_initializer
+_worker_id: int = 0
+_worker_cache: dict[str, MoveAnalysis] = {}
+_worker_cache_path: Path | None = None
+
+
+def _pool_initializer(tmp_dir: str, counter: multiprocessing.Value) -> None:
+    """Assign a worker ID and set up per-worker logging and cache."""
+    global _worker_id, _worker_cache, _worker_cache_path
     from .log import setup_logging
     setup_logging()
 
-    games_data, config_dict, cache_path_str = args
+    with counter.get_lock():
+        _worker_id = counter.value
+        counter.value += 1
+
+    _worker_cache_path = Path(tmp_dir) / f"cache_{_worker_id}.jsonl"
+    _worker_cache = {}
+
+
+def _worker_analyze_one(args: tuple) -> tuple[list[dict], int, int]:
+    """Analyze a single game in a worker process."""
+    game_dict, config_dict, game_index, total_games = args
+    logger = get_logger()
     config = Config(**config_dict)
-    cache_path = Path(cache_path_str) if cache_path_str else None
 
-    # Load cache for this worker
-    cache: dict[str, MoveAnalysis] = {}
-    if cache_path and cache_path.exists():
-        cache = load_cache(cache_path)
+    game_dict["result"] = GameResult(game_dict["result"])
+    game_dict["time_control"] = TimeControl(game_dict["time_control"])
+    game_dict["player_color"] = Color(game_dict["player_color"])
+    game = ParsedGame(**game_dict)
 
-    all_analyses: list[dict] = []
-    total_hits = 0
-    total_misses = 0
+    logger.info("[w%d] Analyzing game %d/%d (%s, %d plies)",
+                _worker_id, game_index + 1, total_games,
+                game.game_id[:8], len(game.moves_san))
 
-    for game_dict in games_data:
-        game = ParsedGame(**game_dict)
-        analyses, hits, misses = analyze_game(game, config, cache, cache_path)
-        all_analyses.extend(a.to_dict() for a in analyses)
-        total_hits += hits
-        total_misses += misses
-
-    return all_analyses, total_hits, total_misses
+    analyses, hits, misses = analyze_game(
+        game, config, _worker_cache, _worker_cache_path,
+    )
+    return [a.to_dict() for a in analyses], hits, misses
 
 
 def analyze_all_games(
@@ -274,8 +279,7 @@ def analyze_all_games(
         total_misses = 0
 
         for i, game in enumerate(games):
-            if (i + 1) % 10 == 0 or i == 0:
-                logger.info("Analyzing game %d/%d", i + 1, len(games))
+            logger.info("Analyzing game %d/%d (%s, %d plies)", i + 1, len(games), game.game_id[:8], len(game.moves_san))
             analyses, hits, misses = analyze_game(game, config, cache, cache_path)
             all_analyses.extend(analyses)
             total_hits += hits
@@ -290,8 +294,6 @@ def analyze_all_games(
     # Multi-process mode
     logger.info("Using %d workers for analysis", config.workers)
 
-    # Distribute games across workers
-    chunks: list[list[dict]] = [[] for _ in range(config.workers)]
     game_dicts = []
     for g in games:
         game_dicts.append({
@@ -304,10 +306,6 @@ def analyze_all_games(
             "clock_times": g.clock_times, "url": g.url, "eco": g.eco,
         })
 
-    for i, gd in enumerate(game_dicts):
-        chunks[i % config.workers].append(gd)
-
-    # Create per-worker temp cache files
     config_dict = {
         "username": config.username, "engine_time_ms": config.engine_time_ms,
         "depth": config.depth, "threads": config.threads, "hash_mb": config.hash_mb,
@@ -319,25 +317,33 @@ def analyze_all_games(
     }
 
     tmp_dir = tempfile.mkdtemp(prefix="blunder_butler_")
-    worker_args = []
-    for i, chunk in enumerate(chunks):
-        if not chunk:
-            continue
-        tmp_cache = str(Path(tmp_dir) / f"cache_{i}.jsonl")
-        worker_args.append((chunk, config_dict, tmp_cache))
+    counter = multiprocessing.Value("i", 0)
 
-    with multiprocessing.Pool(config.workers) as pool:
-        results = pool.map(_worker_analyze, worker_args)
+    # One work item per game — workers pull from a common pool
+    total = len(game_dicts)
+    worker_args = [
+        (gd, config_dict, i, total) for i, gd in enumerate(game_dicts)
+    ]
 
-    # Merge results
     all_analyses = []
     total_hits = 0
     total_misses = 0
-    for analyses_dicts, hits, misses in results:
-        for ad in analyses_dicts:
-            all_analyses.append(MoveAnalysis.from_dict(ad))
-        total_hits += hits
-        total_misses += misses
+    completed = 0
+
+    with multiprocessing.Pool(
+        config.workers,
+        initializer=_pool_initializer,
+        initargs=(tmp_dir, counter),
+    ) as pool:
+        for analyses_dicts, hits, misses in pool.imap_unordered(
+            _worker_analyze_one, worker_args,
+        ):
+            for ad in analyses_dicts:
+                all_analyses.append(MoveAnalysis.from_dict(ad))
+            total_hits += hits
+            total_misses += misses
+            completed += 1
+            logger.info("Progress: %d/%d games complete", completed, total)
 
     logger.info(
         "Analysis complete: %d positions, %d cache hits, %d cache misses",

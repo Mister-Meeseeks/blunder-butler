@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 
@@ -128,12 +130,69 @@ def _should_include_game(game: dict, config: Config, username_lower: str) -> boo
     return True
 
 
+def _fetch_cache_path(config: Config) -> Path:
+    """Return path to the fetch cache file for this user."""
+    return Path(config.output_dir) / config.username.lower() / "fetch_cache.json"
+
+
+def _load_fetch_cache(config: Config) -> list[dict] | None:
+    """Load cached games if the cache is valid. Returns None on miss."""
+    logger = get_logger()
+    path = _fetch_cache_path(config)
+    if not path.exists():
+        return None
+
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        logger.debug("Fetch cache unreadable, ignoring")
+        return None
+
+    fetched_at = datetime.fromisoformat(data["fetched_at"])
+    age_seconds = (datetime.utcnow() - fetched_at).total_seconds()
+    if age_seconds > config.fetch_cache_ttl:
+        logger.debug("Fetch cache expired (%.0fs old, TTL %ds)", age_seconds, config.fetch_cache_ttl)
+        return None
+
+    if data.get("game_count", 0) < config.max_games:
+        logger.debug("Fetch cache has fewer games (%d) than requested (%d)",
+                      data.get("game_count", 0), config.max_games)
+        return None
+
+    games = data.get("games", [])
+    logger.info("Using cached fetch (%d games, %.0fs old)", len(games), age_seconds)
+    return games
+
+
+def _save_fetch_cache(config: Config, games: list[dict]) -> None:
+    """Write fetched games to the cache file."""
+    logger = get_logger()
+    path = _fetch_cache_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "username": config.username.lower(),
+        "fetched_at": datetime.utcnow().isoformat(),
+        "game_count": len(games),
+        "filters": config.filters_dict(),
+        "games": games,
+    }
+    path.write_text(json.dumps(data))
+    logger.debug("Wrote fetch cache (%d games) to %s", len(games), path)
+
+
 def fetch_games(config: Config) -> tuple[list[dict], list[str]]:
     """Fetch and filter games from Chess.com.
 
     Returns (games, archive_urls).
     """
     logger = get_logger()
+
+    # Check fetch cache
+    if not config.no_fetch_cache:
+        cached = _load_fetch_cache(config)
+        if cached is not None:
+            return cached, []
+
     session = _session()
     username = config.username.lower()
 
@@ -168,4 +227,8 @@ def fetch_games(config: Config) -> tuple[list[dict], list[str]]:
                 all_games.append(game)
 
     logger.info("Fetched %d games after filtering", len(all_games))
+
+    # Write cache for future runs
+    _save_fetch_cache(config, all_games)
+
     return all_games, archives
