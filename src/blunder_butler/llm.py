@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import requests
 
@@ -54,6 +55,8 @@ def generate_llm_report(summary: Summary, config: Config) -> str | None:
     evidence = _build_evidence_packet(summary)
     user_prompt = f"Generate a coaching report for this player's chess analysis data:\n\n{evidence}"
 
+    logger.info("LLM request: model=%s, evidence=%d chars", model, len(evidence))
+
     try:
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -69,16 +72,47 @@ def generate_llm_report(summary: Summary, config: Config) -> str | None:
             "max_tokens": 2000,
         }
 
+        url = endpoint.rstrip("/") + "/chat/completions"
+        t0 = time.monotonic()
+
         resp = requests.post(
-            endpoint.rstrip("/") + "/chat/completions",
+            url,
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=(10, 30),
+            stream=True,
         )
-        resp.raise_for_status()
-        data = resp.json()
+
+        logger.info("LLM connected (HTTP %d, %.1fs), waiting for model to finish thinking...",
+                     resp.status_code, time.monotonic() - t0)
+
+        max_wait = 300  # wall-clock seconds
+        chunks = []
+        for chunk in resp.iter_content(chunk_size=256):
+            elapsed = time.monotonic() - t0
+            if not chunk.strip():
+                # OpenRouter keepalive whitespace — ignore but check deadline
+                if elapsed > max_wait:
+                    logger.warning("LLM request timed out after %.0fs", elapsed)
+                    resp.close()
+                    return None
+                continue
+            chunks.append(chunk)
+
+        if not chunks:
+            logger.warning("LLM response contained only keepalive whitespace, no content")
+            return None
+
+        body = b"".join(chunks)
+        elapsed = time.monotonic() - t0
+        logger.info("LLM response complete in %.1fs (%d bytes)", elapsed, len(body))
+
+        if resp.status_code != 200:
+            logger.warning("LLM endpoint returned HTTP %d: %s", resp.status_code, body.decode(errors="replace")[:500])
+            return None
+        data = json.loads(body)
         content = data["choices"][0]["message"]["content"]
-        logger.info("LLM report generated successfully")
+        logger.info("LLM report generated (%d chars)", len(content) if content else 0)
         return content
 
     except Exception as e:
