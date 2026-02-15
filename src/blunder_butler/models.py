@@ -357,6 +357,34 @@ class RunMeta:
 
 
 @dataclass
+class TimeStats:
+    """Time usage statistics."""
+
+    clock_coverage: float  # fraction of moves with clock data
+    avg_dt_s: float
+    median_dt_s: float
+    p90_dt_s: float
+    time_trouble_rate: float  # fraction of moves in time trouble
+    blunder_rate_insta: float  # blunder rate on fast moves
+    blunder_rate_normal: float  # blunder rate on non-fast moves
+    autopilot_blunders: int  # count of fast-move blunders
+    calculation_failures: int  # count of slow-move blunders
+
+    def to_dict(self) -> dict:
+        return {
+            "clock_coverage": round(self.clock_coverage, 3),
+            "avg_dt_s": round(self.avg_dt_s, 1),
+            "median_dt_s": round(self.median_dt_s, 1),
+            "p90_dt_s": round(self.p90_dt_s, 1),
+            "time_trouble_rate": round(self.time_trouble_rate, 3),
+            "blunder_rate_insta": round(self.blunder_rate_insta, 3),
+            "blunder_rate_normal": round(self.blunder_rate_normal, 3),
+            "autopilot_blunders": self.autopilot_blunders,
+            "calculation_failures": self.calculation_failures,
+        }
+
+
+@dataclass
 class Summary:
     """Top-level aggregated summary."""
 
@@ -369,9 +397,10 @@ class Summary:
     swing_moves: list[SwingMove]
     motifs: list[MotifBucket]
     game_summaries: list[GameSummary] = field(default_factory=list)
+    time_stats: TimeStats | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "username": self.username,
             "total_games": self.total_games,
             "total_moves": self.total_moves,
@@ -382,3 +411,6 @@ class Summary:
             "motifs": [m.to_dict() for m in self.motifs],
             "game_summaries": [g.to_dict() for g in self.game_summaries],
         }
+        if self.time_stats is not None:
+            d["time_stats"] = self.time_stats.to_dict()
+        return d

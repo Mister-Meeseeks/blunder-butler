@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .models import MoveFlag, Phase, Summary
+from .models import MoveFlag, Phase, Summary, TimeStats
 
 
 def _phase_label(phase: Phase) -> str:
@@ -17,6 +17,47 @@ def _flag_emoji(flag: MoveFlag) -> str:
         MoveFlag.GOOD: "",
         MoveFlag.BEST: "!",
     }.get(flag, "")
+
+
+def _format_time_section(stats: TimeStats) -> str:
+    """Format the time management analytics section."""
+    lines: list[str] = []
+    lines.append("## Time Management")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| Avg time/move | {stats.avg_dt_s:.1f}s |")
+    lines.append(f"| Median time/move | {stats.median_dt_s:.1f}s |")
+    lines.append(f"| 90th percentile | {stats.p90_dt_s:.1f}s |")
+    lines.append(f"| Time trouble rate | {stats.time_trouble_rate:.1%} |")
+    lines.append(f"| Clock coverage | {stats.clock_coverage:.1%} |")
+    lines.append("")
+
+    lines.append("**Blunder patterns by speed:**")
+    lines.append("")
+    lines.append(f"- Fast moves (autopilot): {stats.blunder_rate_insta:.1%} blunder rate "
+                 f"({stats.autopilot_blunders} blunders)")
+    lines.append(f"- Normal/slow moves: {stats.blunder_rate_normal:.1%} blunder rate "
+                 f"({stats.calculation_failures} calculation failures)")
+    lines.append("")
+
+    if stats.autopilot_blunders > stats.calculation_failures:
+        lines.append(
+            "**Pattern:** Most blunders come from moves played too quickly. "
+            "Slow down and check for threats before committing."
+        )
+    elif stats.calculation_failures > stats.autopilot_blunders:
+        lines.append(
+            "**Pattern:** Most blunders come from positions where you spent significant time. "
+            "Focus on improving calculation technique and candidate move selection."
+        )
+    else:
+        lines.append(
+            "**Pattern:** Blunders are evenly split between fast and slow moves. "
+            "Work on both time discipline and calculation depth."
+        )
+
+    return "\n".join(lines)
 
 
 def generate_report(summary: Summary) -> str:
@@ -120,6 +161,11 @@ def generate_report(summary: Summary) -> str:
             )
         lines.append("")
 
+    # Time management
+    if summary.time_stats:
+        lines.append(_format_time_section(summary.time_stats))
+        lines.append("")
+
     # Training recommendations
     lines.append("## Training Recommendations")
     lines.append("")
@@ -194,6 +240,31 @@ def _generate_recommendations(summary: Summary) -> list[str]:
             recs.append(
                 "**Tactical training:** You're missing tactical opportunities. "
                 "Spend 15-20 minutes daily on tactical puzzles to sharpen pattern recognition."
+            )
+        elif motif.name == "Ignored Threats" and motif.count >= 3:
+            recs.append(
+                "**Threat awareness:** You frequently allow forcing moves (checks and captures). "
+                "Before each move, ask: 'What can my opponent do to me after this?'"
+            )
+        elif motif.name == "Material Givebacks" and motif.count >= 2:
+            recs.append(
+                "**Consolidation:** You win material but give it back shortly after. "
+                "After winning material, focus on trades and simplification rather than attacking."
+            )
+
+    # Time-based recommendations
+    if summary.time_stats:
+        ts = summary.time_stats
+        if ts.autopilot_blunders > ts.calculation_failures and ts.autopilot_blunders >= 3:
+            recs.append(
+                "**Slow down:** Most of your blunders happen on moves played too quickly. "
+                "Take at least a few seconds to scan for opponent threats before every move."
+            )
+        elif ts.calculation_failures > ts.autopilot_blunders and ts.calculation_failures >= 3:
+            recs.append(
+                "**Improve calculation:** Your blunders tend to happen on moves where you think "
+                "a long time. Practice structured calculation: identify candidate moves, check "
+                "forcing lines first, and verify your final choice."
             )
 
     if not recs:

@@ -22,6 +22,7 @@ from .models import (
     TimeControl,
     TimeControlStats,
 )
+from .time_analysis import compute_time_stats
 
 
 def _compute_phase_stats(analyses: list[MoveAnalysis]) -> list[PhaseStats]:
@@ -265,6 +266,79 @@ def _detect_endgame_technique(analyses: list[MoveAnalysis]) -> MotifBucket:
     return bucket
 
 
+def _detect_ignored_threats(analyses: list[MoveAnalysis]) -> MotifBucket:
+    """Detect moves that allow opponent forcing sequences (checks/captures)."""
+    bucket = MotifBucket(
+        name="Ignored Threats",
+        description="Moves that allow opponent forcing sequences (checks/captures).",
+    )
+
+    candidates = []
+    for a in analyses:
+        if not a.is_player_move or a.cpl < 250 or not a.pv:
+            continue
+        try:
+            board = chess.Board(a.fen_before)
+            player_move = board.parse_san(a.move_san)
+            board.push(player_move)
+            # Check if opponent's best reply is a check or capture
+            opp_reply = chess.Move.from_uci(a.pv[0])
+            if board.gives_check(opp_reply) or board.is_capture(opp_reply):
+                candidates.append((a.cpl, a))
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    bucket.count = len(candidates)
+    for _, a in candidates[:3]:
+        bucket.examples.append(MotifExample(
+            game_id=a.game_id, ply=a.ply, fen=a.fen_before,
+            move_san=a.move_san, best_move_san=a.best_move_san,
+            eval_swing=a.cpl, pv=a.pv,
+        ))
+    return bucket
+
+
+def _detect_material_givebacks(analyses: list[MoveAnalysis]) -> MotifBucket:
+    """Detect winning material then immediately giving it back."""
+    bucket = MotifBucket(
+        name="Material Givebacks",
+        description="Winning material then immediately giving it back.",
+    )
+
+    by_game: dict[str, list[MoveAnalysis]] = defaultdict(list)
+    for a in analyses:
+        if a.is_player_move:
+            by_game[a.game_id].append(a)
+
+    candidates = []
+    for game_id, moves in by_game.items():
+        moves.sort(key=lambda m: m.ply)
+        for i in range(len(moves)):
+            current = moves[i]
+            # Check for eval spike (material win): eval jumped by >= 200cp
+            spike = current.eval_after.to_cp_clamped() - current.eval_before.to_cp_clamped()
+            if spike < 200:
+                continue
+            # Look ahead 1-3 player moves for drawdown
+            for j in range(i + 1, min(i + 4, len(moves))):
+                next_move = moves[j]
+                drop = current.eval_after.to_cp_clamped() - next_move.eval_after.to_cp_clamped()
+                if drop >= 250:
+                    candidates.append((drop, next_move))
+                    break
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    bucket.count = len(candidates)
+    for _, a in candidates[:3]:
+        bucket.examples.append(MotifExample(
+            game_id=a.game_id, ply=a.ply, fen=a.fen_before,
+            move_san=a.move_san, best_move_san=a.best_move_san,
+            eval_swing=a.cpl, pv=a.pv,
+        ))
+    return bucket
+
+
 def compute_game_summaries(
     analyses: list[MoveAnalysis], games: list[ParsedGame]
 ) -> list[GameSummary]:
@@ -316,11 +390,20 @@ def compute_summary(
 
     # Motif detection
     motifs = []
-    for detector in [_detect_hanging_pieces, _detect_missed_tactics,
-                     _detect_king_safety, _detect_endgame_technique]:
+    for detector in [
+        _detect_hanging_pieces,
+        _detect_missed_tactics,
+        _detect_ignored_threats,
+        _detect_king_safety,
+        _detect_endgame_technique,
+        _detect_material_givebacks,
+    ]:
         bucket = detector(analyses)
         if bucket.count > 0:
             motifs.append(bucket)
+
+    # Time management analytics
+    time_stats = compute_time_stats(analyses, games)
 
     return Summary(
         username=username,
@@ -332,4 +415,5 @@ def compute_summary(
         swing_moves=swing_moves,
         motifs=motifs,
         game_summaries=game_summaries,
+        time_stats=time_stats,
     )
