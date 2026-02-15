@@ -9,6 +9,20 @@ def _phase_label(phase: Phase) -> str:
     return phase.value.capitalize()
 
 
+_SUBTYPE_LABELS = {
+    "hang_en_prise": "Piece left en prise",
+    "allowed_forcing_check": "Allowed forcing check",
+    "allowed_forcing_capture": "Allowed forcing capture",
+    "missed_forcing_check": "Missed forcing check",
+    "missed_forcing_capture": "Missed forcing capture",
+    "motif_knight_fork": "Missed knight fork",
+}
+
+
+def _subtype_label(subtype: str) -> str:
+    return _SUBTYPE_LABELS.get(subtype, subtype)
+
+
 def _flag_emoji(flag: MoveFlag) -> str:
     return {
         MoveFlag.BLUNDER: "??",
@@ -113,6 +127,24 @@ def generate_report(summary: Summary) -> str:
         )
         lines.append("")
 
+    # Opening ACPL by color
+    if summary.opening_acpl_white is not None and summary.opening_acpl_black is not None:
+        lines.append("### Opening ACPL by Color")
+        lines.append("")
+        lines.append("| Color | ACPL |")
+        lines.append("|-------|------|")
+        lines.append(f"| White | {summary.opening_acpl_white:.1f} |")
+        lines.append(f"| Black | {summary.opening_acpl_black:.1f} |")
+        lines.append("")
+        diff = abs(summary.opening_acpl_white - summary.opening_acpl_black)
+        if diff > 15:
+            worse_color = "White" if summary.opening_acpl_white > summary.opening_acpl_black else "Black"
+            lines.append(
+                f"**Note:** Your opening play as {worse_color} is notably weaker. "
+                f"Consider studying your {worse_color} repertoire specifically."
+            )
+            lines.append("")
+
     # Time control breakdown
     if summary.time_control_stats:
         lines.append("## Performance by Time Control")
@@ -135,11 +167,21 @@ def generate_report(summary: Summary) -> str:
             lines.append("")
             lines.append(motif.description)
             lines.append("")
+            # Subtype breakdown (only if count >= 5 per spec)
+            if motif.subtype_counts and motif.count >= 5:
+                lines.append("**Breakdown:**")
+                lines.append("")
+                for st, cnt in sorted(motif.subtype_counts.items(),
+                                      key=lambda x: x[1], reverse=True):
+                    label = _subtype_label(st)
+                    lines.append(f"- {label}: {cnt}")
+                lines.append("")
             if motif.examples:
                 lines.append("**Examples:**")
                 lines.append("")
                 for i, ex in enumerate(motif.examples, 1):
-                    lines.append(f"{i}. **Game {ex.game_id}, move {ex.ply}**")
+                    subtype_str = f" [{_subtype_label(ex.subtype)}]" if ex.subtype else ""
+                    lines.append(f"{i}. **Game {ex.game_id}, move {ex.ply}**{subtype_str}")
                     lines.append(f"   - Position: `{ex.fen}`")
                     lines.append(f"   - Played: {ex.move_san}")
                     lines.append(f"   - Best: {ex.best_move_san}")
@@ -229,7 +271,7 @@ def _generate_recommendations(summary: Summary) -> list[str]:
                 f"Consider slowing down or playing longer time controls to improve."
             )
 
-    # Motif-specific
+    # Motif-specific (with subtype refinements)
     for motif in summary.motifs:
         if motif.name == "Hanging Pieces" and motif.count >= 3:
             recs.append(
@@ -237,15 +279,43 @@ def _generate_recommendations(summary: Summary) -> list[str]:
                 "Before finalizing a move, scan the board for undefended pieces."
             )
         elif motif.name == "Missed Tactics" and motif.count >= 3:
-            recs.append(
-                "**Tactical training:** You're missing tactical opportunities. "
-                "Spend 15-20 minutes daily on tactical puzzles to sharpen pattern recognition."
-            )
+            st = motif.subtype_counts
+            fork_count = st.get("motif_knight_fork", 0)
+            check_count = st.get("missed_forcing_check", 0)
+            capture_count = st.get("missed_forcing_capture", 0)
+            if fork_count >= 3:
+                recs.append(
+                    "**Knight fork training:** You're repeatedly missing knight forks. "
+                    "Practice puzzles that focus on double attacks, especially with knights."
+                )
+            elif check_count >= 3:
+                recs.append(
+                    "**Check first:** You're missing forcing checks that win material or deliver mate. "
+                    "Always consider checks as candidate moves — they drastically limit your opponent's options."
+                )
+            elif capture_count >= 3:
+                recs.append(
+                    "**Capture awareness:** You're missing winning captures. "
+                    "Before committing to a move, scan for captures that win material."
+                )
+            else:
+                recs.append(
+                    "**Tactical training:** You're missing tactical opportunities. "
+                    "Spend 15-20 minutes daily on tactical puzzles to sharpen pattern recognition."
+                )
         elif motif.name == "Ignored Threats" and motif.count >= 3:
-            recs.append(
-                "**Threat awareness:** You frequently allow forcing moves (checks and captures). "
-                "Before each move, ask: 'What can my opponent do to me after this?'"
-            )
+            st = motif.subtype_counts
+            check_count = st.get("allowed_forcing_check", 0)
+            if check_count >= 3:
+                recs.append(
+                    "**Check defense:** You frequently allow opponent checks that lead to material loss. "
+                    "Before each move, verify your king is not exposed to forcing sequences."
+                )
+            else:
+                recs.append(
+                    "**Threat awareness:** You frequently allow forcing moves (checks and captures). "
+                    "Before each move, ask: 'What can my opponent do to me after this?'"
+                )
         elif motif.name == "Material Givebacks" and motif.count >= 2:
             recs.append(
                 "**Consolidation:** You win material but give it back shortly after. "

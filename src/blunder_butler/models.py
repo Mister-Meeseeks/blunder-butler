@@ -234,9 +234,12 @@ class MotifExample:
     eval_swing: int
     pv: list[str]
     game_url: str = ""
+    subtype: str = ""
+    confidence: float = 0.0
+    meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "game_id": self.game_id,
             "ply": self.ply,
             "fen": self.fen,
@@ -246,6 +249,12 @@ class MotifExample:
             "pv": self.pv,
             "game_url": self.game_url,
         }
+        if self.subtype:
+            d["subtype"] = self.subtype
+            d["confidence"] = round(self.confidence, 2)
+        if self.meta:
+            d["meta"] = self.meta
+        return d
 
 
 @dataclass
@@ -256,14 +265,18 @@ class MotifBucket:
     description: str
     count: int = 0
     examples: list[MotifExample] = field(default_factory=list)
+    subtype_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "description": self.description,
             "count": self.count,
             "examples": [e.to_dict() for e in self.examples],
         }
+        if self.subtype_counts:
+            d["subtype_counts"] = self.subtype_counts
+        return d
 
 
 @dataclass
@@ -398,6 +411,8 @@ class Summary:
     motifs: list[MotifBucket]
     game_summaries: list[GameSummary] = field(default_factory=list)
     time_stats: TimeStats | None = None
+    opening_acpl_white: float | None = None
+    opening_acpl_black: float | None = None
 
     def to_dict(self) -> dict:
         d = {
@@ -413,4 +428,8 @@ class Summary:
         }
         if self.time_stats is not None:
             d["time_stats"] = self.time_stats.to_dict()
+        if self.opening_acpl_white is not None:
+            d["opening_acpl_white"] = round(self.opening_acpl_white, 1)
+        if self.opening_acpl_black is not None:
+            d["opening_acpl_black"] = round(self.opening_acpl_black, 1)
         return d
