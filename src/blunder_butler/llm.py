@@ -86,13 +86,20 @@ def call_llm(
     """
     logger = get_logger()
 
-    endpoint = config.llm_endpoint or os.environ.get("LLM_ENDPOINT", "")
+    endpoint = (config.llm_endpoint
+                or os.environ.get("LLM_ENDPOINT", "")
+                or "https://openrouter.ai/api/v1")
     api_key = config.llm_api_key or os.environ.get("LLM_API_KEY", "")
-    model = config.llm_model or os.environ.get("LLM_MODEL", "gpt-4")
+    model = (config.llm_model
+             or os.environ.get("LLM_MODEL", "")
+             or "moonshotai/kimi-k2.5")
 
-    if not endpoint:
-        logger.warning("No LLM endpoint configured, falling back to deterministic report")
-        return None
+    if not api_key:
+        from .errors import BlunderButlerError
+        raise BlunderButlerError(
+            "LLM API key not set. Set LLM_API_KEY in your environment "
+            "or pass --llm-api-key."
+        )
 
     logger.info("LLM request: model=%s, prompt=%d chars", model, len(user_prompt))
 

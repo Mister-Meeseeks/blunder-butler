@@ -63,6 +63,8 @@ It is designed for reasonably technical users:
 
 ## Outputs
 
+### Bulk run
+
 All outputs live under `./out/<username>/<run_id>/`:
 
 - `raw/archives.json` — months available
@@ -70,7 +72,18 @@ All outputs live under `./out/<username>/<run_id>/`:
 - `analysis/moves.jsonl` — per-move analysis records (append-only)
 - `analysis/games.jsonl` — per-game summary (result, time control, etc.)
 - `stats/summary.json` — aggregated weakness metrics
-- `report/report.md` — human-readable diagnosis + plan
+- `report/report.md` — primary report (LLM narrative when enabled, deterministic otherwise)
+- `report/summary.md` — deterministic stats report (always generated)
+- `report/evidence.json` — LLM evidence packet
+
+### Single-game run
+
+Outputs live under `./out/<username>/single_<game_id>_<timestamp>/`:
+
+- `report.md` — primary report (LLM narrative when enabled, deterministic otherwise)
+- `summary.md` — deterministic stats report (always generated)
+- `summary.json` — structured game stats
+- `evidence.json` — LLM evidence packet
 
 The report must be understandable even without the JSON.
 
@@ -166,11 +179,16 @@ We always include *evidence examples* for each claimed weakness:
 ### 6) LLM report generation (optional but recommended)
 LLM is used for **summarization and coaching narrative**, not chess correctness.
 
+Both LLM and deterministic reports are always generated:
+- `report.md` — LLM narrative (when enabled), otherwise deterministic
+- `summary.md` — deterministic stats report (always written)
+
 If LLM is enabled:
-- Input to LLM must be a compact “evidence packet”:
+- Input to LLM must be a compact "evidence packet":
   - summary.json (aggregates)
   - top examples (FEN + best line + eval swing)
 - The LLM must never invent specific moves not present in the packet.
+- Reports include opponent usernames for easy cross-reference with Chess.com.
 
 If LLM is disabled:
 - Generate a deterministic report template from aggregates + examples.
@@ -181,21 +199,50 @@ LLM configuration:
   - OpenAI-compatible endpoint via env vars
   - local model via user-specified command (optional later)
 
+### 7) Single-game analysis (optional)
+Analyze one game at a time with historical context from the most recent bulk run.
+
+Game selection:
+- `--game latest` — most recent game (always fetches fresh from Chess.com API)
+- `--game -N` — N games ago (always fetches fresh)
+- `--game <id>` — by game ID (checks cache first)
+- `--game <url>` — by Chess.com URL (checks cache first)
+
+Pipeline:
+1. Resolve selector and fetch game (API for latest/offset, cache+API for ID/URL)
+2. Load or run Stockfish analysis (reuses per-game cache)
+3. Load historical context (latest bulk run's summary.json)
+4. Compute single-game stats (phase breakdown, swing moves, motifs)
+5. Generate report:
+   - LLM mode: sends evidence packet + previous bulk report as context, framed as a follow-up from the same coach
+   - Deterministic mode: structured stats with historical comparison
+6. Write output to `out/<username>/single_<game_id>_<timestamp>/`
+
 ---
 
 ## CLI contract
 
 ### One-button default
-   coachchess <username>
+   blunder-butler <username>
 
 
 Behavior:
-- Fetch last 90 days of rated games, all time controls, max 300 games.
-- Analyze only the user’s moves.
-- 200ms/move Stockfish.
+- Fetch last 90 days of rated games, all time controls, max 100 games.
+- Analyze only the user's moves.
+- 100ms/move Stockfish.
 - Produce report at `out/<username>/<timestamp>/report/report.md`.
 
+### Single-game mode
+   blunder-butler <username> --game latest
+
+Behavior:
+- Fetch fresh games from Chess.com API (for `latest`/offset selectors).
+- Analyze one game with Stockfish (reuses per-game cache).
+- Load historical context from most recent bulk run.
+- Produce report at `out/<username>/single_<game_id>_<timestamp>/report.md`.
+
 ### Common knobs
+- `--game latest|-N|<id>|<url>` (single-game mode)
 - `--time-control bullet|blitz|rapid|daily|all`
 - `--since 30d` / `--until YYYY-MM-DD`
 - `--max-games 1000`
@@ -263,15 +310,18 @@ Not blockers, but choices that shape the MVP:
 
 ## Milestones
 
-### v0.1 (MVP)
-- `coachchess <username>` works end-to-end
+### v0.1 (MVP) ✓
+- `blunder-butler <username>` works end-to-end
 - outputs raw pgn + report.md
 - phase ACPL and blunder rates by time control
 
-### v0.2
+### v0.2 ✓
 - stable cache + resume
 - motif heuristics with evidence examples
 - deterministic report + optional LLM narrative
+- single-game analysis mode (`--game`)
+- historical context comparison in single-game reports
+- opponent names in reports for easy game lookup
 
 ### v0.3
 - lightweight local UI (optional) or richer markdown (charts, tables)
