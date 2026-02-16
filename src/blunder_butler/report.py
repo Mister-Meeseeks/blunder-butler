@@ -74,8 +74,14 @@ def _format_time_section(stats: TimeStats) -> str:
     return "\n".join(lines)
 
 
+def _opponent_map(summary: Summary) -> dict[str, str]:
+    """Build a game_id -> opponent name lookup."""
+    return {gs.game_id: gs.opponent for gs in summary.game_summaries}
+
+
 def generate_report(summary: Summary) -> str:
     """Generate a deterministic Markdown coaching report."""
+    opponents = _opponent_map(summary)
     lines: list[str] = []
 
     lines.append(f"# Chess Coaching Report: {summary.username}")
@@ -181,7 +187,9 @@ def generate_report(summary: Summary) -> str:
                 lines.append("")
                 for i, ex in enumerate(motif.examples, 1):
                     subtype_str = f" [{_subtype_label(ex.subtype)}]" if ex.subtype else ""
-                    lines.append(f"{i}. **Game {ex.game_id}, move {ex.ply}**{subtype_str}")
+                    opp = opponents.get(ex.game_id, "")
+                    opp_str = f" vs {opp}" if opp else ""
+                    lines.append(f"{i}. **Game {ex.game_id[:8]}{opp_str}, move {ex.ply}**{subtype_str}")
                     lines.append(f"   - Position: `{ex.fen}`")
                     lines.append(f"   - Played: {ex.move_san}")
                     lines.append(f"   - Best: {ex.best_move_san}")
@@ -194,11 +202,12 @@ def generate_report(summary: Summary) -> str:
     if summary.swing_moves:
         lines.append("## Worst Moves")
         lines.append("")
-        lines.append("| # | Game | Ply | Phase | Played | Best | CPL |")
-        lines.append("|---|------|-----|-------|--------|------|-----|")
+        lines.append("| # | Game | Opponent | Ply | Phase | Played | Best | CPL |")
+        lines.append("|---|------|----------|-----|-------|--------|------|-----|")
         for i, sm in enumerate(summary.swing_moves, 1):
+            opp = opponents.get(sm.game_id, "")
             lines.append(
-                f"| {i} | {sm.game_id[:8]} | {sm.ply} | {_phase_label(sm.phase)} "
+                f"| {i} | {sm.game_id[:8]} | {opp} | {sm.ply} | {_phase_label(sm.phase)} "
                 f"| {sm.move_san} | {sm.best_move_san} | {sm.cpl} |"
             )
         lines.append("")

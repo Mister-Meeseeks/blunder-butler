@@ -34,6 +34,25 @@ blunder-butler <your-chess.com-username>
 
 This fetches your last 90 days of rated games, analyzes them with Stockfish, and writes a report to `out/<username>/<run_id>/report/report.md`.
 
+### Single-game analysis
+
+Analyze a single game with historical context from your most recent bulk run:
+
+```bash
+blunder-butler USERNAME --game latest          # Latest game
+blunder-butler USERNAME --game -3              # 3 games ago
+blunder-butler USERNAME --game 144991567688    # By game ID
+blunder-butler USERNAME --game https://www.chess.com/game/live/144991567688  # By URL
+```
+
+Output is written to `out/<username>/single_<game_id>_<timestamp>/report.md`. If a previous bulk run exists, the report includes a comparison to your historical baseline.
+
+Combine with `--llm on` for an LLM-powered coaching narrative:
+
+```bash
+blunder-butler USERNAME --game latest --llm on
+```
+
 ### Common options
 
 ```bash

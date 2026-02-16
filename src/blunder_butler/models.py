@@ -433,3 +433,55 @@ class Summary:
         if self.opening_acpl_black is not None:
             d["opening_acpl_black"] = round(self.opening_acpl_black, 1)
         return d
+
+
+@dataclass
+class SingleGameSummary:
+    """Summary for a single game analysis."""
+
+    game: ParsedGame
+    analyses: list[MoveAnalysis]
+    phase_stats: list[PhaseStats]
+    swing_moves: list[SwingMove]
+    motifs: list[MotifBucket]
+    historical_context: Summary | None = None
+
+    total_moves: int = 0
+    acpl: float = 0.0
+    blunders: int = 0
+    mistakes: int = 0
+    inaccuracies: int = 0
+
+    def to_dict(self) -> dict:
+        d = {
+            "game": {
+                "game_id": self.game.game_id,
+                "url": self.game.url,
+                "result": self.game.result.value,
+                "player_color": self.game.player_color.value,
+                "time_control": self.game.time_control.value,
+                "opponent": self.game.opponent_name,
+                "date": self.game.date,
+                "eco": self.game.eco,
+            },
+            "performance": {
+                "total_moves": self.total_moves,
+                "acpl": round(self.acpl, 1),
+                "blunders": self.blunders,
+                "mistakes": self.mistakes,
+                "inaccuracies": self.inaccuracies,
+            },
+            "phase_stats": [p.to_dict() for p in self.phase_stats],
+            "swing_moves": [s.to_dict() for s in self.swing_moves],
+            "motifs": [m.to_dict() for m in self.motifs],
+        }
+        if self.historical_context is not None:
+            d["historical_baseline"] = {
+                "total_games": self.historical_context.total_games,
+                "avg_acpl": round(self.historical_context.acpl, 1),
+                "phase_stats": [
+                    p.to_dict() for p in self.historical_context.phase_stats
+                    if p.total_moves > 0
+                ],
+            }
+        return d

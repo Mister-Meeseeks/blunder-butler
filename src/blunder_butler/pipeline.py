@@ -113,9 +113,17 @@ def run_pipeline(config: Config) -> Path:
     # Stage 6: Report
     logger.info("=== Stage 6: Report generation ===")
     from .llm import _build_evidence_packet
+    from .report import generate_report
     evidence_path = run_dir / "report" / "evidence.json"
     with open(evidence_path, "w") as f:
         f.write(_build_evidence_packet(summary))
+
+    # Always write the deterministic report as summary.md
+    det_report = generate_report(summary)
+    det_path = run_dir / "report" / "summary.md"
+    with open(det_path, "w") as f:
+        f.write(det_report)
+
     report_text = generate_report_with_llm_fallback(summary, config)
     report_path = run_dir / "report" / "report.md"
     with open(report_path, "w") as f:

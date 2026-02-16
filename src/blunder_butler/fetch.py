@@ -180,6 +180,58 @@ def _save_fetch_cache(config: Config, games: list[dict]) -> None:
     logger.debug("Wrote fetch cache (%d games) to %s", len(games), path)
 
 
+def fetch_recent_games(username: str, max_games: int = 50) -> list[dict]:
+    """Fetch the most recent games for a user from Chess.com.
+
+    Always hits the API (no cache). Returns raw game dicts sorted chronologically
+    (oldest first, newest last).
+    """
+    logger = get_logger()
+    session = _session()
+    archives = fetch_archives(session, username.lower())
+    if not archives:
+        return []
+
+    all_games: list[dict] = []
+    # Walk archives newest-first until we have enough games
+    for archive_url in reversed(archives):
+        monthly = fetch_monthly_games(session, archive_url)
+        all_games = monthly + all_games  # prepend to keep chronological order
+        if len(all_games) >= max_games:
+            break
+
+    # Trim to max_games from the end (most recent)
+    if len(all_games) > max_games:
+        all_games = all_games[-max_games:]
+
+    logger.info("Fetched %d recent games for %s from API", len(all_games), username)
+    return all_games
+
+
+def fetch_single_game(username: str, game_id: str) -> dict | None:
+    """Fetch a single game from Chess.com by game ID.
+
+    Searches the player's most recent archives for the game.
+    Returns the raw game dict, or None if not found.
+    """
+    logger = get_logger()
+    session = _session()
+    archives = fetch_archives(session, username.lower())
+    if not archives:
+        return None
+
+    # Search from most recent archive backward
+    for archive_url in reversed(archives):
+        games = fetch_monthly_games(session, archive_url)
+        for game in games:
+            url = game.get("url", "")
+            if url and url.rstrip("/").split("/")[-1] == game_id:
+                logger.info("Found game %s in archive %s", game_id, archive_url)
+                return game
+    logger.warning("Game %s not found in archives for %s", game_id, username)
+    return None
+
+
 def fetch_games(config: Config) -> tuple[list[dict], list[str]]:
     """Fetch and filter games from Chess.com.
 

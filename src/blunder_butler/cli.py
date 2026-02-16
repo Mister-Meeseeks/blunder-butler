@@ -53,6 +53,7 @@ from .pipeline import run_pipeline
     help="Only report on opening phase (debugging).")
 @click.option("--endgames-only", is_flag=True, default=False,
     help="Only report on endgame phase (debugging).")
+@click.option("--game", default="", help="Analyze a single game: 'latest', offset like '-3', game ID, or URL.")
 @click.option("--verbose", is_flag=True, default=False, help="Enable debug logging.")
 @click.option("--inaccuracy-threshold", default=50, type=int,
     help="CPL threshold for inaccuracy classification.")
@@ -86,6 +87,7 @@ def main(
     output_dir: str,
     openings_only: bool,
     endgames_only: bool,
+    game: str,
     verbose: bool,
     inaccuracy_threshold: int,
     mistake_threshold: int,
@@ -126,8 +128,13 @@ def main(
     )
 
     try:
-        run_dir = run_pipeline(config)
-        click.echo(f"Report written to: {run_dir / 'report' / 'report.md'}")
+        if game:
+            from .single_game import run_single_game_pipeline
+            out_dir = run_single_game_pipeline(config, game)
+            click.echo(f"Report written to: {out_dir / 'report.md'}")
+        else:
+            run_dir = run_pipeline(config)
+            click.echo(f"Report written to: {run_dir / 'report' / 'report.md'}")
     except BlunderButlerError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(e.exit_code)
